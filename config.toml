@@ -1,0 +1,7 @@
+[log]
+level = 0
+format = "json"
+add_source = true
+
+[bot]
+dev_guilds = []
