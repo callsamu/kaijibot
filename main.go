@@ -18,14 +18,12 @@ import (
 	"github.com/spf13/viper"
 )
 
-var (
-	VERSION = "dev"
-	COMMIT = "unknown"
-)
+var VERSION = "1.0.0"
 
 type Config struct {
 	Bot struct {
-		Token string `mapstructure:"token"`
+		Env   string `mapstructure:"environment"`
+		Token string `toml:"token"`
 	}`toml:"bot"`
 
 	Log struct {
@@ -62,14 +60,12 @@ func LoadConfig(path string) (*Config, error) {
 type Bot struct {
 	Cfg       *Config
 	Client    bot.Client
-	Version   string
 	Commit    string
 }
 
-func NewBot(cfg *Config, version string, commit string) *Bot {
+func NewBot(cfg *Config, commit string) *Bot {
 	return &Bot{
 		Cfg:       cfg,
-		Version:   version,
 		Commit:    commit,
 	}
 }
@@ -124,9 +120,9 @@ func main() {
 	}
 
 	setupLogger(cfg)
-	slog.Info("Starting KaijiBot...", slog.String("version", VERSION), slog.String("commit", COMMIT))
+	slog.Info("Starting KaijiBot...", slog.String("version", VERSION), slog.String("commit", VERSION))
 
-	b := NewBot(cfg, VERSION, COMMIT)
+	b := NewBot(cfg, VERSION)
 	if err = b.SetupBot(bot.NewListenerFunc(b.OnReady)); err != nil {
 		slog.Error("Failed to setup bot", slog.Any("err", err))
 		os.Exit(-1)
