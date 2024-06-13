@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -15,6 +16,8 @@ import (
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
 	"github.com/disgoorg/disgo/gateway"
+	"github.com/disgoorg/disgo/handler"
+	"github.com/disgoorg/snowflake/v2"
 	"github.com/spf13/viper"
 )
 
@@ -22,8 +25,9 @@ var VERSION = "1.0.0"
 
 type Config struct {
 	Bot struct {
-		Env   string `mapstructure:"environment"`
-		Token string `toml:"token"`
+		Env       string   		  `mapstructure:"environment"`
+		Token     string   		  `toml:"token"`
+		DevGuilds []snowflake.ID  `toml:"dev_guilds"`
 	}`toml:"bot"`
 
 	Log struct {
@@ -71,8 +75,13 @@ func NewBot(cfg *Config, commit string) *Bot {
 }
 
 func (b *Bot) SetupBot(listeners ...bot.EventListener) error {
+	intents := []gateway.Intents{
+		gateway.IntentGuilds,
+		gateway.IntentGuildMessages,
+	}
+
 	client, err := disgo.New(b.Cfg.Bot.Token,
-		bot.WithGatewayConfigOpts(gateway.WithIntents(gateway.IntentGuilds, gateway.IntentGuildMessages)),
+		bot.WithGatewayConfigOpts(gateway.WithIntents(intents...)),
 		bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds)),
 		bot.WithEventListeners(listeners...),
 	)
@@ -91,6 +100,22 @@ func (b *Bot) OnReady(_ *events.Ready) {
 	if err := b.Client.SetPresence(ctx, gateway.WithListeningActivity("you"), gateway.WithOnlineStatus(discord.OnlineStatusOnline)); err != nil {
 		slog.Error("Failed to set presence", slog.Any("err", err))
 	}
+}
+
+var MyPing = discord.SlashCommandCreate{
+	Name:        "ping",
+	Description: "Pings the bot",
+	Options:     nil,
+}
+
+func (b *Bot) Ping(e *handler.CommandEvent) error {
+	slog.Info("Bot was Pinged!")
+
+	message := discord.MessageCreate{
+		Content: "Pong!",
+	}
+
+	return e.CreateMessage(message)
 }
 
 func setupLogger(cfg *Config) {
@@ -112,7 +137,18 @@ func setupLogger(cfg *Config) {
 	slog.SetDefault(slog.New(sHandler))
 }
 
+func (b *Bot) registerHandlers() *handler.Mux {
+	h := handler.New()
+
+	h.Command("/ping", b.Ping)
+
+	return h
+}
+
 func main() {
+	shouldSyncCmds := flag.Bool("sync", false, "Sync Commands")
+	flag.Parse()
+
 	cfg, err := LoadConfig("./config.toml")
 	if err != nil {
 		slog.Error("Failed to load config", slog.Any("err", err))
@@ -123,9 +159,24 @@ func main() {
 	slog.Info("Starting KaijiBot...", slog.String("version", VERSION), slog.String("commit", VERSION))
 
 	b := NewBot(cfg, VERSION)
-	if err = b.SetupBot(bot.NewListenerFunc(b.OnReady)); err != nil {
+	h := b.registerHandlers()
+	listeners := []bot.EventListener{
+		h,
+		bot.NewListenerFunc(b.OnReady),
+	}
+	if err = b.SetupBot(listeners...); err != nil {
 		slog.Error("Failed to setup bot", slog.Any("err", err))
 		os.Exit(-1)
+	}
+
+	if *shouldSyncCmds {
+		slog.Info("Syncing commands...")
+		commands := []discord.ApplicationCommandCreate{MyPing}
+		if err = handler.SyncCommands(b.Client, commands, cfg.Bot.DevGuilds); err != nil {
+			slog.Error("Failed to sync commands", slog.Any("err", err))
+			os.Exit(-1)
+		}
+		slog.Info("Commands synced")
 	}
 
 	defer func() {
